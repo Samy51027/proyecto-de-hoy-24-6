@@ -4626,6 +4626,36 @@ class Pantalla_Restaurante_Asiatico:
                 # Función interna para refrescar el cuadrito visual
                 self.actualizar_cuadrito_receta()
 
+                # --- NUEVO: Control de temporizador de Recetas ---
+                self.tiempo_max_receta = 40        # Segundos para completar la orden
+                self.tiempo_receta_actual = self.tiempo_max_receta
+                self.puntos_receta_actual = 35     # Valor inicial
+                self.receta_reducida = False       # Bandera para reducir solo una vez
+
+                # Reloj dinámico dentro del cuadrito HUD (alineado abajo a X:150, Y:145)
+                self.texto_reloj_receta = self.canvas.create_text(
+                        150, 145, text=f"Tiempo Orden: {self.tiempo_receta_actual}s", 
+                        font=("Arial", 10, "bold"), fill="orange"
+                )
+                
+                # Arrancar el reloj de inmediato
+                self.iniciar_reloj_receta_asiatica()
+
+                # --- NUEVO: Control de temporizador de Recetas ---
+                self.tiempo_max_receta = 40        # Segundos iniciales para la orden
+                self.tiempo_receta_actual = self.tiempo_max_receta
+                self.puntos_receta_actual = 35     # Valor base de la receta
+                self.receta_reducida = False       # Bandera para reducir solo una vez
+
+                # Texto visual en el Canvas para el reloj de la receta
+                self.texto_reloj_receta = self.canvas.create_text(
+                    150, 145, text=f"Tiempo Orden: {self.tiempo_receta_actual}s", 
+                    font=("Arial", 10, "bold"), fill="orange"
+                )
+                
+                # Activar el reloj inmediatamente al iniciar
+                self.iniciar_reloj_receta_asiatica()
+
         # --- TEXTOS INDICADORES SOBRE LOS PUESTOS DE TRABAJO ---
                 # Puestos de Cocina (Color Naranja)
                 self.canvas.create_text(675, 125, text="COCINAR", fill="#ff7f27", font=("Arial", 9, "bold"))  # Cocina (2, 13)
@@ -4661,6 +4691,109 @@ class Pantalla_Restaurante_Asiatico:
                 self.canvas.create_text(925, 325, text="S. Soja", fill="white", font=("Arial", 8, "bold"))       # Fila 6
                 self.canvas.create_text(925, 375, text="Tofu", fill="white", font=("Arial", 8, "bold"))          # Fila 7
                 self.canvas.create_text(925, 425, text="Algas", fill="white", font=("Arial", 8, "bold"))         # Fila 8
+
+        def entregar_ingrediente_asiatico(self, event):
+                fila = self.chef.chef_ejey // 50
+                columna = self.chef.chef_ejex // 50
+
+                if (fila, columna) in self.estaciones_entrega:
+                        if self.ingrediente_en_mano != None:
+                                nombre_ing = self.ingrediente_en_mano.nombre_ingrediente
+                                
+                                # Si el ingrediente no pasó por máquina, asumimos que su estado es "Crudo"
+                                estado_actual = getattr(self.ingrediente_en_mano, 'estado_coccion', 'Crudo')
+
+                                # --- NUEVA VALIDACIÓN: BLOQUEAR SI ESTÁ QUEMADO ---
+                                if estado_actual == "Quemado":
+                                        messagebox.showerror("Comida Quemada", "¡No puedes entregar ingredientes quemados! Llévalo al basurero.")
+                                        return
+
+                                if nombre_ing in self.requisitos_receta:
+                                        estado_requerido = self.requisitos_receta[nombre_ing]
+                                        
+                                        # Validar si el estado de preparación es el correcto
+                                        if estado_actual == estado_requerido:
+                                                print(f"¡{nombre_ing} ({estado_actual}) entregado correctamente en la mesa!")
+                                                self.ingredientes_entregados[nombre_ing] = estado_actual
+                                                
+                                                # El ingrediente se suelta y desaparece al ponerse en la mesa
+                                                self.ingrediente_en_mano.soltar_ingrediente()
+                                                self.ingrediente_en_mano = None
+                                                
+                                                # Actualizar HUD cuadrito
+                                                self.actualizar_cuadrito_receta()
+                                                
+                                                # Validar si la receta entera está lista
+                                                completada = True
+                                                for ing, est in self.requisitos_receta.items():
+                                                        if ing not in self.ingredientes_entregados or self.ingredientes_entregados[ing] != est:
+                                                                completada = False
+                                                                break
+                                                
+                                                if completada:
+                                                        # CAMBIADO: Añade los puntos dinámicos acumulados del reloj
+                                                        self.puntaje_jugador += self.puntos_receta_actual
+                                                        self.canvas.itemconfig(self.texto_puntaje_jugador, text="Puntaje: " + str(self.puntaje_jugador))
+                                                        messagebox.showinfo("¡Perfecto!", f"¡Receta Completada! Recibes +{self.puntos_receta_actual} PTS")
+                                                        
+                                                        # CAMBIADO: Reinicia el reloj de forma limpia y crea la nueva orden
+                                                        self.forzar_nueva_receta_asiatica()
+                                        else:
+                                                messagebox.showwarning("Estado Incorrecto", f"El ingrediente {nombre_ing} está {estado_actual}, pero la receta lo pide {estado_requerido}.")
+                                else:
+                                        print(f"{nombre_ing} no se necesita en esta receta.")
+                        else:
+                                print("No tienes nada en la mano.")
+                else:
+                        print("No estás en la mesa de entrega.")
+
+        def iniciar_reloj_receta_asiatica(self):
+                def descontar_segundo():
+                        if hasattr(self, 'tiempo_receta_actual') and self.tiempo_receta_actual > 0:
+                                self.tiempo_receta_actual -= 1
+                                
+                                # Actualiza el reloj visible abajo en el HUD
+                                self.canvas.itemconfig(self.texto_reloj_receta, text=f"Tiempo Orden: {self.tiempo_receta_actual}s")
+                                
+                                # REGLA: A la mitad del tiempo, los puntos bajan a la mitad
+                                if self.tiempo_receta_actual == (self.tiempo_max_receta // 2) and not self.receta_reducida:
+                                        self.puntos_receta_actual = self.puntos_receta_actual // 2
+                                        self.receta_reducida = True
+                                        messagebox.showwarning("¡Tiempo Crítico!", "La orden asiática se está retrasando. ¡Puntos reducidos a la mitad!")
+                                
+                                # REGLA: Si el tiempo llega a 0, expira y penaliza
+                                if self.tiempo_receta_actual <= 0:
+                                        messagebox.showerror("Orden Vencida", f"¡La orden expiró! Penalización: -{self.puntos_receta_actual} PTS")
+                                        
+                                        self.puntaje_jugador -= self.puntos_receta_actual
+                                        if self.puntaje_jugador < 0: 
+                                                self.puntaje_jugador = 0
+                                        
+                                        self.canvas.itemconfig(self.texto_puntaje_jugador, text="Puntaje: " + str(self.puntaje_jugador))
+                                        self.forzar_nueva_receta_asiatica()
+                                else:
+                                        # Seguir el bucle cada 1 segundo
+                                        self.id_after_receta = self.ventana_restaurante.after(1000, descontar_segundo)
+                                        
+                if hasattr(self, 'id_after_receta'):
+                        self.ventana_restaurante.after_cancel(self.id_after_receta)
+                        
+                descontar_segundo()
+
+        def forzar_nueva_receta_asiatica(self):
+                # Reiniciar los valores del reloj HUD
+                self.tiempo_receta_actual = self.tiempo_max_receta
+                self.puntos_receta_actual = 35
+                self.receta_reducida = False
+                
+                # Cambiar a la siguiente receta aleatoria
+                self.ingredientes_entregados = {}
+                self.receta_actual_nombre = random.choice(list(self.recetas_asiaticas.keys()))
+                self.requisitos_receta = self.recetas_asiaticas[self.receta_actual_nombre]
+                self.actualizar_cuadrito_receta()
+                
+                # Re-iniciar el temporizador para la nueva receta
+                self.iniciar_reloj_receta_asiatica()
 
         def actualizar_cuadrito_receta(self):
                 lineas = []
@@ -4894,6 +5027,11 @@ class Pantalla_Restaurante_Asiatico:
                                 # Si el ingrediente no pasó por máquina, asumimos que su estado es "Crudo"
                                 estado_actual = getattr(self.ingrediente_en_mano, 'estado_coccion', 'Crudo')
 
+                                # --- NUEVA VALIDACIÓN: SI ESTÁ QUEMADO BLOQUEA LA ENTREGA ---
+                                if estado_actual == "Quemado":
+                                        messagebox.showerror("Comida Quemada", "¡No puedes entregar ingredientes quemados! Llévalo al basurero.")
+                                        return
+
                                 if nombre_ing in self.requisitos_receta:
                                         estado_requerido = self.requisitos_receta[nombre_ing]
                                         
@@ -4917,16 +5055,13 @@ class Pantalla_Restaurante_Asiatico:
                                                                 break
                                                 
                                                 if completada:
-                                                        # Añadir los 35 puntos pactados
-                                                        self.puntaje_jugador += 35
+                                                        # MODIFICADO: Suma el puntaje acumulado actual (dinámico por el tiempo)
+                                                        self.puntaje_jugador += self.puntos_receta_actual
                                                         self.canvas.itemconfig(self.texto_puntaje_jugador, text="Puntaje: " + str(self.puntaje_jugador))
-                                                        messagebox.showinfo("¡Perfecto!", f"¡Receta Completada con éxito! +35 PTS")
+                                                        messagebox.showinfo("¡Perfecto!", f"¡Receta Completada con éxito! +{self.puntos_receta_actual} PTS")
                                                         
-                                                        # Cambiar a la siguiente receta aleatoria
-                                                        self.ingredientes_entregados = {}
-                                                        self.receta_actual_nombre = random.choice(list(self.recetas_asiaticas.keys()))
-                                                        self.requisitos_receta = self.recetas_asiaticas[self.receta_actual_nombre]
-                                                        self.actualizar_cuadrito_receta()
+                                                        # MODIFICADO: Llama al limpiador y regenerador del reloj
+                                                        self.forzar_nueva_receta_asiatica()
                                         else:
                                                 messagebox.showwarning("Estado Incorrecto", f"El ingrediente {nombre_ing} está {estado_actual}, pero la receta lo pide {estado_requerido}.")
                                 else:
